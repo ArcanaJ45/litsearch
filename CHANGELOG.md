@@ -7,6 +7,13 @@
 - **GitHub Actions 自动构建**: 推送 tag 后自动构建 macOS `.dmg` + Windows `.exe`，并发布到 GitHub Releases
 - macOS 首次打开需右键 → 打开（绕过 Gatekeeper）
 
+### 🌐 网页版部署
+- **Streamlit 网页版**: 新增 `streamlit_app.py`，支持通过浏览器访问，无需安装任何软件
+- 支持 Streamlit Community Cloud 免费部署，任何平台（Mac/Windows/Linux/手机）皆可使用
+- 网页版包含全部功能：双源检索、影响因子、相关性分析、智能摘选、CSV/TXT 导出
+- 提供表格视图 + 卡片视图两种浏览模式
+- 新增 `.streamlit/config.toml` 主题配置
+
 ### ✨ 新功能
 - **期刊影响因子 (IF)**: 通过 OpenAlex API 自动获取期刊 2 年平均被引次数（等效 JCR Impact Factor），结果展示影响因子数值与等级标识
 - **课题相关性分析**: 用户可输入自己的课题描述，系统自动计算每篇文献与课题的相关度分数 (0-100)，基于 TF-IDF 余弦相似度与关键词覆盖率算法
