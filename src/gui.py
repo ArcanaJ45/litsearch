@@ -796,15 +796,18 @@ class LitSearchGUI:
 
         content = scroll_frame
 
-        # 标题
-        tk.Label(content, text=paper.title, bg=COLORS["card"], fg=COLORS["text"],
-                 font=("Microsoft YaHei UI", 13, "bold"),
-                 wraplength=720, justify=tk.LEFT).pack(
-            fill=tk.X, padx=20, pady=(18, 10))
+        # 标题（可选中复制）
+        title_w = self._readonly_textbox(
+            content, paper.title,
+            font=("Microsoft YaHei UI", 13, "bold"),
+            bg=COLORS["card"], fg=COLORS["text"],
+            height=2, width=78, relief="flat", bd=0)
+        title_w.pack(fill=tk.X, padx=20, pady=(18, 10))
 
         # 信息网格
         info_frame = tk.Frame(content, bg=COLORS["card"])
         info_frame.pack(fill=tk.X, padx=20)
+        info_frame.columnconfigure(1, weight=1)
 
         # 影响因子格式化
         if_str = format_if(paper.impact_factor)
@@ -841,29 +844,45 @@ class LitSearchGUI:
                      fg=COLORS["text2"], font=FONT_B, width=8,
                      anchor="e").grid(row=i, column=0, sticky="ne",
                                       padx=(0, 8), pady=3)
-            val_label = tk.Label(info_frame, text=value, bg=COLORS["card"],
-                                 fg=COLORS["text"], font=FONT,
-                                 wraplength=620, justify=tk.LEFT,
-                                 anchor="w")
-            val_label.grid(row=i, column=1, sticky="w", pady=3)
 
-            # 链接可点击
-            if label == "链接" and value:
-                val_label.config(fg=COLORS["accent"], cursor="hand2",
-                                 font=("Microsoft YaHei UI", 10, "underline"))
-                val_label.bind("<Button-1>",
-                               lambda e, url=value: self._open_url(url))
+            # 用可选中复制的 Entry/Text 取代 Label
+            val_str = value or ""
+            if label == "链接" and val_str:
+                # 链接：可选中 + 可点击
+                link_w = self._readonly_textbox(
+                    info_frame, val_str, font=("Microsoft YaHei UI", 10, "underline"),
+                    bg=COLORS["card"], fg=COLORS["accent"],
+                    height=1, width=70, relief="flat", bd=0, cursor="hand2")
+                link_w.grid(row=i, column=1, sticky="we", pady=3)
+                link_w.bind("<Button-1>",
+                            lambda e, url=val_str: self._open_url(url))
+            elif len(val_str) > 80:
+                # 长文本用多行 Text
+                h = min(max(len(val_str) // 70 + 1, 2), 4)
+                tw = self._readonly_textbox(
+                    info_frame, val_str, font=FONT,
+                    bg=COLORS["card"], fg=COLORS["text"],
+                    height=h, width=70, relief="flat", bd=0)
+                tw.grid(row=i, column=1, sticky="we", pady=3)
+            else:
+                # 短文本用单行 Entry（readonly 可选中复制）
+                sv = tk.StringVar(value=val_str)
+                ent = tk.Entry(info_frame, textvariable=sv, font=FONT,
+                               bg=COLORS["card"], fg=COLORS["text"],
+                               relief="flat", bd=0,
+                               readonlybackground=COLORS["card"],
+                               state="readonly", width=70)
+                ent.grid(row=i, column=1, sticky="we", pady=3)
 
         # 摘要
         tk.Label(content, text="摘要:", bg=COLORS["card"], fg=COLORS["text2"],
                  font=FONT_B, anchor="w").pack(fill=tk.X, padx=20, pady=(15, 3))
 
-        abs_text = tk.Text(content, height=8, font=FONT, bg=COLORS["input_bg"],
-                           fg=COLORS["text"], wrap=tk.WORD, relief="solid",
-                           bd=1, padx=8, pady=8)
+        abs_text = self._readonly_textbox(
+            content, paper.abstract or "（无摘要）",
+            font=FONT, bg=COLORS["input_bg"], fg=COLORS["text"],
+            height=8, relief="solid", bd=1, padx=8, pady=8)
         abs_text.pack(fill=tk.X, padx=20, pady=(0, 10))
-        abs_text.insert("1.0", paper.abstract or "（无摘要）")
-        abs_text.config(state=tk.DISABLED)
 
         # ━━ 智能分析报告 ━━
         user_topic = getattr(self, '_user_topic', '')
@@ -876,13 +895,11 @@ class LitSearchGUI:
                 user_topic, paper.title, paper.abstract,
                 paper.relevance_score)
 
-            analysis_text = tk.Text(content, height=12, font=FONT,
-                                    bg="#F0F9FF", fg=COLORS["text"],
-                                    wrap=tk.WORD, relief="solid",
-                                    bd=1, padx=10, pady=10)
+            analysis_text = self._readonly_textbox(
+                content, insights,
+                font=FONT, bg="#F0F9FF", fg=COLORS["text"],
+                height=12, relief="solid", bd=1, padx=10, pady=10)
             analysis_text.pack(fill=tk.X, padx=20, pady=(0, 10))
-            analysis_text.insert("1.0", insights)
-            analysis_text.config(state=tk.DISABLED)
 
         # 底部按钮
         btn_frame = tk.Frame(content, bg=COLORS["card"])
@@ -1015,6 +1032,30 @@ class LitSearchGUI:
                  bg=COLORS["card"], fg=COLORS["text"],
                  font=FONT).pack(side=tk.LEFT)
         return row
+
+    def _readonly_textbox(self, parent, text, **kw):
+        """创建可选中复制但不可编辑的 Text 控件（外观接近 Label）"""
+        height = kw.pop("height", 1)
+        font = kw.pop("font", FONT)
+        bg = kw.pop("bg", COLORS["card"])
+        fg = kw.pop("fg", COLORS["text"])
+        width = kw.pop("width", 80)
+        cursor = kw.pop("cursor", "arrow")
+        t = tk.Text(parent, height=height, width=width, font=font,
+                    bg=bg, fg=fg, wrap=tk.WORD, cursor=cursor,
+                    highlightthickness=0, **kw)
+        t.insert("1.0", text or "")
+        # 允许选中和 Ctrl+C / Ctrl+A，阻止其他按键输入
+        def _block_edit(event):
+            # 允许 Ctrl+C, Ctrl+A, 方向键, Home/End
+            if event.state & 4 and event.keysym.lower() in ("c", "a"):
+                return  # 允许
+            if event.keysym in ("Left", "Right", "Up", "Down",
+                                "Home", "End", "Shift_L", "Shift_R"):
+                return  # 允许
+            return "break"
+        t.bind("<Key>", _block_edit)
+        return t
 
     def _on_num_spin(self):
         """Spinbox 值变化时验证范围"""
