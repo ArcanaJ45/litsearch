@@ -1,7 +1,8 @@
 """
-API 客户端：PubMed E-utilities + Crossref REST API
+API 客户端：PubMed E-utilities + Crossref REST API + Semantic Scholar + OpenAlex
 """
 
+import re
 import time
 import xml.etree.ElementTree as ET
 from typing import List, Optional
@@ -17,9 +18,15 @@ PUBMED_EFETCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 # ─── Crossref ───────────────────────────────────────
 CROSSREF_WORKS = "https://api.crossref.org/works"
 
-# 请求头（Crossref 要求提供联系邮箱以获得更好的服务 polite pool）
+# ─── Semantic Scholar ───────────────────────────────
+S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
+
+# ─── OpenAlex ───────────────────────────────────────
+OPENALEX_WORKS = "https://api.openalex.org/works"
+
+# 请求头
 HEADERS = {
-    "User-Agent": "LitSearchTool/1.0 (mailto:researcher@example.com)",
+    "User-Agent": "LitSearchTool/1.2 (mailto:researcher@example.com)",
 }
 
 # 请求间隔（秒），避免触发限流
@@ -320,7 +327,6 @@ def _parse_crossref_item(item: dict) -> Optional[Paper]:
         # 摘要（Crossref 有时返回带 JATS XML 标签的摘要）
         abstract = item.get("abstract", "")
         # 简单清理 XML 标签
-        import re
         abstract = re.sub(r'<[^>]+>', '', abstract).strip()
 
         link = f"https://doi.org/{doi}"
@@ -338,3 +344,266 @@ def _parse_crossref_item(item: dict) -> Optional[Paper]:
         )
     except Exception:
         return None
+
+
+# ═══════════════════════════════════════════════════════
+# Semantic Scholar API
+# ═══════════════════════════════════════════════════════
+def search_semantic_scholar(query: str, max_results: int = 30,
+                            sort: str = "relevance",
+                            min_year: Optional[int] = None,
+                            max_year: Optional[int] = None,
+                            verbose: bool = False) -> List[Paper]:
+    """
+    通过 Semantic Scholar Graph API 检索文献。
+    免费，无需 API Key，覆盖 2 亿+ 论文（CS/工程/生物医学/交叉学科）。
+    速率限制：100 次/5 分钟（无 API Key）。
+    """
+    papers: List[Paper] = []
+
+    fields = ("title,authors,year,externalIds,abstract,"
+              "venue,publicationTypes,citationCount")
+    params = {
+        "query": query,
+        "limit": min(max_results, 100),  # S2 API 单次最多 100
+        "fields": fields,
+    }
+
+    # 年份过滤
+    if min_year and max_year:
+        params["year"] = f"{min_year}-{max_year}"
+    elif min_year:
+        params["year"] = f"{min_year}-"
+    elif max_year:
+        params["year"] = f"-{max_year}"
+
+    if verbose:
+        print(f"  [Semantic Scholar] 检索: {query}")
+
+    try:
+        time.sleep(1.0)  # S2 免费版速率较严格，多等一下
+        resp = requests.get(S2_SEARCH, params=params,
+                            headers=HEADERS, timeout=20)
+        # 429 重试一次
+        if resp.status_code == 429:
+            if verbose:
+                print("  [Semantic Scholar] 速率限制，等待 3 秒后重试...")
+            time.sleep(3)
+            resp = requests.get(S2_SEARCH, params=params,
+                                headers=HEADERS, timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        if verbose:
+            print(f"  [Semantic Scholar] 检索失败: {e}")
+        return papers
+
+    items = data.get("data", [])
+    total = data.get("total", 0)
+
+    if verbose:
+        print(f"  [Semantic Scholar] 找到 {total} 条结果，获取 {len(items)} 条")
+
+    for item in items:
+        paper = _parse_s2_item(item)
+        if paper:
+            papers.append(paper)
+
+    if verbose:
+        print(f"  [Semantic Scholar] 成功解析 {len(papers)} 篇文献")
+
+    return papers
+
+
+def _parse_s2_item(item: dict) -> Optional[Paper]:
+    """解析单条 Semantic Scholar 记录"""
+    try:
+        title = item.get("title", "")
+        if not title:
+            return None
+
+        # 作者
+        authors_list = item.get("authors", [])
+        author_names = [a.get("name", "") for a in authors_list[:10] if a.get("name")]
+        authors = ", ".join(author_names)
+        if len(authors_list) > 10:
+            authors += " et al."
+
+        # 年份
+        year = str(item.get("year", "")) if item.get("year") else ""
+
+        # DOI
+        ext_ids = item.get("externalIds", {}) or {}
+        doi = ext_ids.get("DOI", "") or ""
+        pmid = ext_ids.get("PubMed", "") or ""
+
+        # 期刊
+        journal = item.get("venue", "") or ""
+
+        # 摘要
+        abstract = item.get("abstract", "") or ""
+
+        # 链接
+        if doi:
+            link = f"https://doi.org/{doi}"
+        elif pmid:
+            link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        else:
+            s2_id = item.get("paperId", "")
+            link = f"https://www.semanticscholar.org/paper/{s2_id}" if s2_id else ""
+
+        return Paper(
+            title=title,
+            authors=authors,
+            journal=journal,
+            year=year,
+            doi=doi,
+            pmid=str(pmid),
+            link=link,
+            abstract=abstract,
+            source="SemanticScholar",
+        )
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════
+# OpenAlex API (搜索)
+# ═══════════════════════════════════════════════════════
+def search_openalex(query: str, max_results: int = 30,
+                    sort: str = "relevance",
+                    min_year: Optional[int] = None,
+                    max_year: Optional[int] = None,
+                    verbose: bool = False) -> List[Paper]:
+    """
+    通过 OpenAlex API 检索文献。
+    免费，无需 API Key，覆盖 2.5 亿+ 学术作品（全学科最全面的开放数据源）。
+    包含引用数据、开放获取信息、概念标签等。
+    """
+    papers: List[Paper] = []
+
+    params = {
+        "search": query,
+        "per_page": min(max_results, 200),    # OpenAlex 单页最多 200
+        "select": ("id,doi,title,authorships,publication_year,"
+                   "primary_location,abstract_inverted_index,type,"
+                   "cited_by_count,open_access"),
+    }
+
+    # 排序
+    if sort == "pub_date":
+        params["sort"] = "publication_year:desc"
+    else:
+        params["sort"] = "relevance_score:desc"
+
+    # 过滤
+    filters = []
+    if min_year:
+        filters.append(f"from_publication_date:{min_year}-01-01")
+    if max_year:
+        filters.append(f"to_publication_date:{max_year}-12-31")
+    # 只要期刊文章
+    filters.append("type:article")
+    if filters:
+        params["filter"] = ",".join(filters)
+
+    if verbose:
+        print(f"  [OpenAlex] 检索: {query}")
+
+    try:
+        time.sleep(REQUEST_DELAY)
+        resp = requests.get(OPENALEX_WORKS, params=params,
+                            headers={**HEADERS, "Accept": "application/json"},
+                            timeout=20)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        if verbose:
+            print(f"  [OpenAlex] 检索失败: {e}")
+        return papers
+
+    results = data.get("results", [])
+    total = data.get("meta", {}).get("count", 0)
+
+    if verbose:
+        print(f"  [OpenAlex] 找到 {total} 条结果，获取 {len(results)} 条")
+
+    for item in results:
+        paper = _parse_openalex_item(item)
+        if paper:
+            papers.append(paper)
+
+    if verbose:
+        print(f"  [OpenAlex] 成功解析 {len(papers)} 篇文献")
+
+    return papers
+
+
+def _parse_openalex_item(item: dict) -> Optional[Paper]:
+    """解析单条 OpenAlex 记录"""
+    try:
+        title = item.get("title", "") or ""
+        if not title:
+            return None
+
+        # DOI
+        doi_url = item.get("doi", "") or ""
+        doi = doi_url.replace("https://doi.org/", "") if doi_url else ""
+
+        # 作者
+        authorships = item.get("authorships", [])
+        author_names = []
+        for a in authorships[:10]:
+            name = a.get("author", {}).get("display_name", "")
+            if name:
+                author_names.append(name)
+        authors = ", ".join(author_names)
+        if len(authorships) > 10:
+            authors += " et al."
+
+        # 年份
+        year = str(item.get("publication_year", "")) if item.get("publication_year") else ""
+
+        # 期刊
+        journal = ""
+        primary = item.get("primary_location", {}) or {}
+        source_info = primary.get("source", {}) or {}
+        journal = source_info.get("display_name", "") or ""
+
+        # 摘要（OpenAlex 使用 inverted index 格式）
+        abstract = _reconstruct_abstract(item.get("abstract_inverted_index"))
+
+        # 链接
+        link = f"https://doi.org/{doi}" if doi else ""
+
+        return Paper(
+            title=title,
+            authors=authors,
+            journal=journal,
+            year=year,
+            doi=doi,
+            pmid="",
+            link=link,
+            abstract=abstract,
+            source="OpenAlex",
+        )
+    except Exception:
+        return None
+
+
+def _reconstruct_abstract(inverted_index: Optional[dict]) -> str:
+    """
+    从 OpenAlex 的 abstract_inverted_index 还原摘要文本。
+    格式: {"word1": [0, 5], "word2": [1], ...} → 按位置重建句子
+    """
+    if not inverted_index:
+        return ""
+    try:
+        word_positions = []
+        for word, positions in inverted_index.items():
+            for pos in positions:
+                word_positions.append((pos, word))
+        word_positions.sort(key=lambda x: x[0])
+        return " ".join(w for _, w in word_positions)
+    except Exception:
+        return ""

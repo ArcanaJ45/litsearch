@@ -1,5 +1,19 @@
 # LitSearch 更新日志
 
+## v1.3.0 (2025-07-16)  —  多源数据检索
+
+### 🌐 新增数据源（P0）
+- **Semantic Scholar**: 新增 S2 Graph API 搜索，覆盖 2 亿+ 论文（CS/工程/生物医学/交叉学科），包含引用计数
+- **OpenAlex 搜索**: 利用 OpenAlex Works API 检索 2.5 亿+ 学术作品，全学科最全面的开放数据源
+- **四源联合检索**: 默认"全部数据源"模式同时搜索 PubMed + Crossref + Semantic Scholar + OpenAlex，自动去重合并
+- **灵活数据源选择**: 支持 6 种模式：全部(推荐) / PubMed+Crossref / 仅PubMed / 仅Crossref / 仅S2 / 仅OpenAlex
+
+### 📊 统计增强
+- **统计栏扩展**: 新增 S2 和 OpenAlex 来源计数展示（GUI + Streamlit 双端同步）
+- **合并去重优化**: `_merge()` 函数改为可变参数，支持任意数量数据源合并
+
+---
+
 ## v1.2.0 (2025-07-16)  —  精准检索升级
 
 ### 🎯 检索质量大幅提升（P0）

@@ -17,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models import Paper
 from query_builder import build_query, describe_query, STUDY_TYPE_FILTERS
-from api_client import search_pubmed, search_crossref
+from api_client import (search_pubmed, search_crossref,
+                        search_semantic_scholar, search_openalex)
 from doi_validator import validate_papers
 from exporter import export_csv, export_txt
 from impact_factor import fetch_impact_factors, format_if, if_level
@@ -27,7 +28,7 @@ from topic_guardrails import apply_topic_guardrails
 from paper_tagger import tag_papers, get_tag_summary
 
 # ─── 版本与联系信息 ─────────────────────────────────
-APP_VERSION = "v1.2.0"
+APP_VERSION = "v1.3.0"
 APP_NAME = "LitSearch 文献检索工具"
 CONTACT_EMAIL = "arcbj045@gmail.com"
 GITHUB_URL = "https://github.com/ArcanaJ045"
@@ -88,7 +89,7 @@ class LitSearchGUI:
         tk.Label(header, text=f"📚 {APP_NAME}",
                  bg=COLORS["sidebar"], fg="white",
                  font=("Microsoft YaHei UI", 15, "bold")).pack(side=tk.LEFT, padx=20)
-        tk.Label(header, text=f"PubMed + Crossref  |  {APP_VERSION}",
+        tk.Label(header, text=f"PubMed + Crossref + S2 + OpenAlex  |  {APP_VERSION}",
                  bg=COLORS["sidebar"], fg=COLORS["sidebar_txt"],
                  font=FONT_SMALL).pack(side=tk.LEFT, padx=10)
 
@@ -237,10 +238,13 @@ class LitSearchGUI:
         tk.Label(inner, text="数据源:",
                  bg=COLORS["card"], fg=COLORS["text"],
                  font=FONT, anchor="w").pack(fill=tk.X, pady=(4, 2))
-        self.source_var = tk.StringVar(value="both")
-        for text, val in [("PubMed + Crossref", "both"),
+        self.source_var = tk.StringVar(value="all")
+        for text, val in [("全部数据源（推荐）", "all"),
+                          ("PubMed + Crossref", "both"),
                           ("仅 PubMed", "pubmed"),
-                          ("仅 Crossref", "crossref")]:
+                          ("仅 Crossref", "crossref"),
+                          ("仅 Semantic Scholar", "s2"),
+                          ("仅 OpenAlex", "openalex")]:
             tk.Radiobutton(inner, text=text, variable=self.source_var,
                            value=val, bg=COLORS["card"], fg=COLORS["text"],
                            font=FONT_SMALL, activebackground=COLORS["card"],
@@ -354,6 +358,20 @@ class LitSearchGUI:
                        activebackground=COLORS["card"],
                        selectcolor=COLORS["card"]).pack(anchor="w", pady=2)
 
+        # 影响因子范围
+        if_frame = self._option_row(inner, "IF 范围:")
+        self.min_if_var = tk.StringVar(value="")
+        self.max_if_var = tk.StringVar(value="")
+        tk.Entry(if_frame, textvariable=self.min_if_var, width=6,
+                 font=FONT_SMALL, bg=COLORS["input_bg"]).pack(side=tk.LEFT)
+        tk.Label(if_frame, text=" ~ ", bg=COLORS["card"],
+                 font=FONT_SMALL).pack(side=tk.LEFT)
+        tk.Entry(if_frame, textvariable=self.max_if_var, width=6,
+                 font=FONT_SMALL, bg=COLORS["input_bg"]).pack(side=tk.LEFT)
+        tk.Label(if_frame, text="  (留空=不限)", bg=COLORS["card"],
+                 fg=COLORS["text2"],
+                 font=("Microsoft YaHei UI", 8)).pack(side=tk.LEFT)
+
         ttk.Separator(inner).pack(fill=tk.X, pady=12)
 
         # ━━ 操作按钮 ━━
@@ -413,6 +431,8 @@ class LitSearchGUI:
             ("total",    "总计: 0",       COLORS["text"]),
             ("pubmed",   "PubMed: 0",     COLORS["accent"]),
             ("crossref", "Crossref: 0",   COLORS["success"]),
+            ("s2",       "S2: 0",         "#FF6D00"),
+            ("openalex", "OpenAlex: 0",   "#2196F3"),
             ("doi_ok",   "DOI验证: 0/0",  "#8B5CF6"),
             ("avg_if",   "IF均值: N/A",   COLORS["warning"]),
             ("avg_rel",  "相关度: N/A",   COLORS["danger"]),
@@ -506,6 +526,8 @@ class LitSearchGUI:
             verify_online = self.verify_var.get()
             keep_no_doi = self.keep_no_doi_var.get()
             fetch_if = self.fetch_if_var.get()
+            min_if = self._parse_float(self.min_if_var.get())
+            max_if = self._parse_float(self.max_if_var.get())
             user_topic = self._topic_value.strip()
             max_fetch = min(num + 20, 100)
 
@@ -523,9 +545,11 @@ class LitSearchGUI:
 
             pubmed_papers = []
             crossref_papers = []
+            s2_papers = []
+            openalex_papers = []
 
             # PubMed
-            if source in ("both", "pubmed"):
+            if source in ("all", "both", "pubmed"):
                 self.root.after(0, lambda: self.status_var.set(
                     "正在检索 PubMed ..."))
                 try:
@@ -537,7 +561,7 @@ class LitSearchGUI:
                         f"PubMed 检索出错: {e}"))
 
             # Crossref
-            if source in ("both", "crossref"):
+            if source in ("all", "both", "crossref"):
                 self.root.after(0, lambda: self.status_var.set(
                     "正在检索 Crossref ..."))
                 try:
@@ -548,9 +572,34 @@ class LitSearchGUI:
                     self.root.after(0, lambda: self.status_var.set(
                         f"Crossref 检索出错: {e}"))
 
+            # Semantic Scholar
+            if source in ("all", "s2"):
+                self.root.after(0, lambda: self.status_var.set(
+                    "正在检索 Semantic Scholar ..."))
+                try:
+                    s2_papers = search_semantic_scholar(
+                        crossref_q, max_results=max_fetch,
+                        sort=sort, min_year=min_yr, max_year=max_yr)
+                except Exception as e:
+                    self.root.after(0, lambda: self.status_var.set(
+                        f"Semantic Scholar 检索出错: {e}"))
+
+            # OpenAlex
+            if source in ("all", "openalex"):
+                self.root.after(0, lambda: self.status_var.set(
+                    "正在检索 OpenAlex ..."))
+                try:
+                    openalex_papers = search_openalex(
+                        crossref_q, max_results=max_fetch,
+                        sort=sort, min_year=min_yr, max_year=max_yr)
+                except Exception as e:
+                    self.root.after(0, lambda: self.status_var.set(
+                        f"OpenAlex 检索出错: {e}"))
+
             # 合并去重
             self.root.after(0, lambda: self.status_var.set("正在合并去重..."))
-            papers = self._merge(pubmed_papers, crossref_papers)
+            papers = self._merge(pubmed_papers, crossref_papers,
+                                 s2_papers, openalex_papers)
 
             # 过滤无 DOI
             if not keep_no_doi:
@@ -569,6 +618,22 @@ class LitSearchGUI:
                 self.root.after(0, lambda: self.status_var.set(
                     f"正在查询 {len(papers)} 篇文献的影响因子（OpenAlex）..."))
                 papers = fetch_impact_factors(papers, max_workers=4)
+
+            # 影响因子范围过滤
+            if fetch_if and (min_if is not None or max_if is not None):
+                before = len(papers)
+                filtered = []
+                for p in papers:
+                    if p.impact_factor is None or p.impact_factor == 0:
+                        continue  # 无 IF 数据的文献在范围过滤时排除
+                    if min_if is not None and p.impact_factor < min_if:
+                        continue
+                    if max_if is not None and p.impact_factor > max_if:
+                        continue
+                    filtered.append(p)
+                papers = filtered
+                self.root.after(0, lambda: self.status_var.set(
+                    f"IF 范围过滤: {before} → {len(papers)} 篇"))
 
             # 计算相关度
             if user_topic:
@@ -604,6 +669,8 @@ class LitSearchGUI:
             # 统计
             pm_count = sum(1 for p in papers if "PubMed" in p.source)
             cr_count = sum(1 for p in papers if "Crossref" in p.source)
+            s2_count = sum(1 for p in papers if "SemanticScholar" in p.source)
+            oa_count = sum(1 for p in papers if "OpenAlex" in p.source)
             doi_ok = sum(1 for p in papers if p.doi_verified)
             total = len(papers)
 
@@ -618,8 +685,8 @@ class LitSearchGUI:
 
             # 更新 UI（在主线程）
             self.root.after(0, lambda: self._show_results(
-                papers[:num], total, pm_count, cr_count, doi_ok,
-                avg_if, avg_rel))
+                papers[:num], total, pm_count, cr_count,
+                s2_count, oa_count, doi_ok, avg_if, avg_rel))
 
         except Exception as e:
             self.root.after(0, lambda: messagebox.showerror(
@@ -639,7 +706,8 @@ class LitSearchGUI:
         else:
             self.status_var.set("未找到符合条件的文献")
 
-    def _show_results(self, papers, total, pm, cr, doi_ok,
+    def _show_results(self, papers, total, pm, cr,
+                      s2=0, oa=0, doi_ok=0,
                       avg_if=None, avg_rel=None):
         # 清空表格
         for item in self.tree.get_children():
@@ -669,6 +737,8 @@ class LitSearchGUI:
         self.stat_labels["total"].config(text=f"总计: {total}")
         self.stat_labels["pubmed"].config(text=f"PubMed: {pm}")
         self.stat_labels["crossref"].config(text=f"Crossref: {cr}")
+        self.stat_labels["s2"].config(text=f"S2: {s2}")
+        self.stat_labels["openalex"].config(text=f"OpenAlex: {oa}")
         self.stat_labels["doi_ok"].config(text=f"DOI验证: {doi_ok}/{total}")
         if avg_if is not None:
             self.stat_labels["avg_if"].config(text=f"IF均值: {avg_if:.2f}")
@@ -922,20 +992,15 @@ class LitSearchGUI:
             selected.remove("exclude_review")
         return selected
 
-    def _merge(self, pubmed_papers, crossref_papers):
+    def _merge(self, *paper_lists):
         merged = {}
-        for p in pubmed_papers:
-            key = p.doi.lower().strip() if p.doi else f"t:{p.title.lower().strip()}"
-            if key in merged:
-                merged[key] = merged[key].merge(p)
-            else:
-                merged[key] = p
-        for p in crossref_papers:
-            key = p.doi.lower().strip() if p.doi else f"t:{p.title.lower().strip()}"
-            if key in merged:
-                merged[key] = merged[key].merge(p)
-            else:
-                merged[key] = p
+        for papers in paper_lists:
+            for p in papers:
+                key = p.doi.lower().strip() if p.doi else f"t:{p.title.lower().strip()}"
+                if key in merged:
+                    merged[key] = merged[key].merge(p)
+                else:
+                    merged[key] = p
         return list(merged.values())
 
     def _section_label(self, parent, text):
@@ -1098,6 +1163,13 @@ class LitSearchGUI:
     def _parse_int(self, s):
         try:
             return int(s.strip())
+        except (ValueError, AttributeError):
+            return None
+
+    def _parse_float(self, s):
+        try:
+            v = float(s.strip())
+            return v if v > 0 else None
         except (ValueError, AttributeError):
             return None
 

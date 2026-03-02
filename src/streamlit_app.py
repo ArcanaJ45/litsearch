@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models import Paper
 from query_builder import build_query, describe_query, STUDY_TYPE_FILTERS
-from api_client import search_pubmed, search_crossref
+from api_client import (search_pubmed, search_crossref,
+                        search_semantic_scholar, search_openalex)
 from doi_validator import validate_papers
 from impact_factor import fetch_impact_factors, format_if, if_level
 from relevance_analyzer import (compute_batch_relevance, generate_insights,
@@ -23,7 +24,7 @@ from topic_guardrails import apply_topic_guardrails
 from paper_tagger import tag_papers, get_tag_summary
 
 # ─── 版本与联系信息 ─────────────────────────────────
-APP_VERSION = "v1.2.0"
+APP_VERSION = "v1.3.0"
 APP_NAME = "LitSearch 文献检索工具"
 CONTACT_EMAIL = "arcbj045@gmail.com"
 GITHUB_URL = "https://github.com/ArcanaJ045"
@@ -91,21 +92,16 @@ st.markdown("""
 # 辅助函数
 # ═══════════════════════════════════════════════════════
 
-def merge_papers(pubmed_papers, crossref_papers):
+def merge_papers(*paper_lists):
     """合并去重"""
     merged = {}
-    for p in pubmed_papers:
-        key = p.doi.lower().strip() if p.doi else f"t:{p.title.lower().strip()}"
-        if key in merged:
-            merged[key] = merged[key].merge(p)
-        else:
-            merged[key] = p
-    for p in crossref_papers:
-        key = p.doi.lower().strip() if p.doi else f"t:{p.title.lower().strip()}"
-        if key in merged:
-            merged[key] = merged[key].merge(p)
-        else:
-            merged[key] = p
+    for papers in paper_lists:
+        for p in papers:
+            key = p.doi.lower().strip() if p.doi else f"t:{p.title.lower().strip()}"
+            if key in merged:
+                merged[key] = merged[key].merge(p)
+            else:
+                merged[key] = p
     return list(merged.values())
 
 
@@ -171,7 +167,7 @@ def export_csv_bytes(papers, include_abstract=False):
 st.markdown(f"""
 <div class="main-header">
     <h1>📚 {APP_NAME}</h1>
-    <p>PubMed + Crossref 双源检索  |  {APP_VERSION}  |  Dev: ArcanaJ</p>
+    <p>PubMed + Crossref + S2 + OpenAlex 四源检索  |  {APP_VERSION}  |  Dev: ArcanaJ</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -210,10 +206,13 @@ with st.sidebar:
     st.subheader("⚙️ 参数")
     source = st.radio(
         "数据源",
-        options=["both", "pubmed", "crossref"],
-        format_func=lambda x: {"both": "PubMed + Crossref（推荐）",
+        options=["all", "both", "pubmed", "crossref", "s2", "openalex"],
+        format_func=lambda x: {"all": "全部数据源（推荐）",
+                                "both": "PubMed + Crossref",
                                 "pubmed": "仅 PubMed",
-                                "crossref": "仅 Crossref"}[x],
+                                "crossref": "仅 Crossref",
+                                "s2": "仅 Semantic Scholar",
+                                "openalex": "仅 OpenAlex"}[x],
         index=0,
     )
 
@@ -267,6 +266,15 @@ with st.sidebar:
     keep_no_doi = st.checkbox("保留无 DOI 文献", value=False)
     fetch_if = st.checkbox("查询影响因子（OpenAlex）", value=True,
                             help="通过 OpenAlex API 获取期刊影响因子")
+    if_col1, if_col2 = st.columns(2)
+    with if_col1:
+        min_if = st.number_input("IF 最小值", min_value=0.0, value=0.0,
+                                  step=0.5, format="%.1f",
+                                  help="留 0 = 不限下限")
+    with if_col2:
+        max_if = st.number_input("IF 最大值", min_value=0.0, value=0.0,
+                                  step=0.5, format="%.1f",
+                                  help="留 0 = 不限上限")
     include_abstract = st.checkbox("导出时包含摘要", value=False)
 
     st.divider()
@@ -307,11 +315,13 @@ if search_clicked:
         max_fetch = min(num_results + 20, 100)
         pubmed_papers = []
         crossref_papers = []
+        s2_papers = []
+        openalex_papers = []
 
         progress = st.progress(0, text="正在检索...")
 
         # PubMed
-        if source in ("both", "pubmed"):
+        if source in ("all", "both", "pubmed"):
             progress.progress(10, text="正在检索 PubMed ...")
             try:
                 pubmed_papers = search_pubmed(
@@ -323,8 +333,8 @@ if search_clicked:
                 st.warning(f"PubMed 检索出错: {e}")
 
         # Crossref
-        if source in ("both", "crossref"):
-            progress.progress(30, text="正在检索 Crossref ...")
+        if source in ("all", "both", "crossref"):
+            progress.progress(25, text="正在检索 Crossref ...")
             try:
                 crossref_papers = search_crossref(
                     crossref_q, max_results=max_fetch,
@@ -334,9 +344,34 @@ if search_clicked:
             except Exception as e:
                 st.warning(f"Crossref 检索出错: {e}")
 
+        # Semantic Scholar
+        if source in ("all", "s2"):
+            progress.progress(35, text="正在检索 Semantic Scholar ...")
+            try:
+                s2_papers = search_semantic_scholar(
+                    crossref_q, max_results=max_fetch,
+                    sort=sort_by,
+                    min_year=int(min_year) if min_year else None,
+                    max_year=int(max_year) if max_year else None)
+            except Exception as e:
+                st.warning(f"Semantic Scholar 检索出错: {e}")
+
+        # OpenAlex
+        if source in ("all", "openalex"):
+            progress.progress(45, text="正在检索 OpenAlex ...")
+            try:
+                openalex_papers = search_openalex(
+                    crossref_q, max_results=max_fetch,
+                    sort=sort_by,
+                    min_year=int(min_year) if min_year else None,
+                    max_year=int(max_year) if max_year else None)
+            except Exception as e:
+                st.warning(f"OpenAlex 检索出错: {e}")
+
         # 合并去重
         progress.progress(50, text="正在合并去重...")
-        papers = merge_papers(pubmed_papers, crossref_papers)
+        papers = merge_papers(pubmed_papers, crossref_papers,
+                              s2_papers, openalex_papers)
 
         # 过滤无 DOI
         if not keep_no_doi:
@@ -353,6 +388,21 @@ if search_clicked:
         if fetch_if:
             progress.progress(70, text="正在查询影响因子（OpenAlex）...")
             papers = fetch_impact_factors(papers, max_workers=4)
+
+        # 影响因子范围过滤
+        if fetch_if and (min_if > 0 or max_if > 0):
+            before = len(papers)
+            filtered = []
+            for p in papers:
+                if p.impact_factor is None or p.impact_factor == 0:
+                    continue
+                if min_if > 0 and p.impact_factor < min_if:
+                    continue
+                if max_if > 0 and p.impact_factor > max_if:
+                    continue
+                filtered.append(p)
+            papers = filtered
+            st.info(f"IF 范围过滤: {before} → {len(papers)} 篇")
 
         # 相关度
         user_topic = topic_input.strip()
@@ -405,13 +455,15 @@ if st.session_state.search_done and st.session_state.papers:
     total = len(all_papers)
     pm_count = sum(1 for p in papers if "PubMed" in p.source)
     cr_count = sum(1 for p in papers if "Crossref" in p.source)
+    s2_count = sum(1 for p in papers if "SemanticScholar" in p.source)
+    oa_count = sum(1 for p in papers if "OpenAlex" in p.source)
     doi_ok = sum(1 for p in papers if p.doi_verified)
     if_values = [p.impact_factor for p in papers if p.impact_factor]
     avg_if = sum(if_values) / len(if_values) if if_values else None
     rel_values = [p.relevance_score for p in papers if p.relevance_score > 0]
     avg_rel = sum(rel_values) / len(rel_values) if rel_values else None
 
-    cols = st.columns(6)
+    cols = st.columns(8)
     with cols[0]:
         st.metric("📊 总计", f"{total} 篇",
                   delta=f"显示 {len(papers)}" if len(papers) < total else None)
@@ -420,10 +472,14 @@ if st.session_state.search_done and st.session_state.papers:
     with cols[2]:
         st.metric("🌐 Crossref", cr_count)
     with cols[3]:
-        st.metric("✅ DOI验证", f"{doi_ok}/{len(papers)}")
+        st.metric("📚 S2", s2_count)
     with cols[4]:
-        st.metric("📈 IF均值", f"{avg_if:.2f}" if avg_if else "N/A")
+        st.metric("🔍 OpenAlex", oa_count)
     with cols[5]:
+        st.metric("✅ DOI验证", f"{doi_ok}/{len(papers)}")
+    with cols[6]:
+        st.metric("📈 IF均值", f"{avg_if:.2f}" if avg_if else "N/A")
+    with cols[7]:
         st.metric("🎯 相关度", f"{avg_rel:.0f}%" if avg_rel else "N/A")
 
     # ── 导出按钮 ──
