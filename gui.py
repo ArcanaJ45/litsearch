@@ -23,9 +23,11 @@ from exporter import export_csv, export_txt
 from impact_factor import fetch_impact_factors, format_if, if_level
 from relevance_analyzer import (compute_batch_relevance, generate_insights,
                                  relevance_level, extract_relevant_sentences)
+from topic_guardrails import apply_topic_guardrails
+from paper_tagger import tag_papers, get_tag_summary
 
 # ─── 版本与联系信息 ─────────────────────────────────
-APP_VERSION = "v1.1.0"
+APP_VERSION = "v1.2.0"
 APP_NAME = "LitSearch 文献检索工具"
 CONTACT_EMAIL = "arcbj045@gmail.com"
 GITHUB_URL = "https://github.com/ArcanaJ045"
@@ -425,21 +427,26 @@ class LitSearchGUI:
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
         columns = ("idx", "title", "authors", "journal", "year",
-                   "impact_factor", "relevance", "doi", "doi_ok", "source")
+                   "impact_factor", "relevance",
+                   "research_type", "pollutant", "window",
+                   "doi", "doi_ok", "source")
         self.tree = ttk.Treeview(tree_frame, columns=columns,
                                  show="headings", selectmode="browse")
 
         col_config = [
             ("idx",            "#",      40),
-            ("title",          "标题",   280),
-            ("authors",        "作者",   150),
-            ("journal",        "期刊",   130),
-            ("year",           "年份",   55),
-            ("impact_factor",  "IF",     65),
-            ("relevance",      "相关度", 60),
-            ("doi",            "DOI",    160),
-            ("doi_ok",         "DOI验证", 55),
-            ("source",         "来源",   80),
+            ("title",          "标题",   240),
+            ("authors",        "作者",   130),
+            ("journal",        "期刊",   110),
+            ("year",           "年份",   50),
+            ("impact_factor",  "IF",     55),
+            ("relevance",      "相关度", 55),
+            ("research_type",  "研究类型", 70),
+            ("pollutant",      "污染物",  65),
+            ("window",         "暴露窗口", 65),
+            ("doi",            "DOI",    140),
+            ("doi_ok",         "DOI验证", 50),
+            ("source",         "来源",   70),
         ]
         for col_id, heading, width in col_config:
             self.tree.heading(col_id, text=heading,
@@ -569,6 +576,22 @@ class LitSearchGUI:
                     "正在分析文献与课题的相关度..."))
                 papers = compute_batch_relevance(user_topic, papers)
 
+            # 结构标签打标
+            self.root.after(0, lambda: self.status_var.set(
+                "正在为文献打结构标签..."))
+            papers = tag_papers(papers)
+            # 将 _tag_* 写入正式字段
+            for p in papers:
+                p.research_type = getattr(p, '_tag_research_type', '')
+                p.pollutant_category = getattr(p, '_tag_pollutant_category', '')
+                p.exposure_window = getattr(p, '_tag_exposure_window', '')
+
+            # 课题防护栏（重排序 + 降权非相关文献）
+            if user_topic:
+                self.root.after(0, lambda: self.status_var.set(
+                    "正在应用课题防护栏..."))
+                papers = apply_topic_guardrails(papers, user_topic)
+
             # 保存用户课题描述，供详情窗口使用
             self._user_topic = user_topic
 
@@ -627,8 +650,13 @@ class LitSearchGUI:
             verified = "✓" if p.doi_verified else "✗"
             if_str = f"{p.impact_factor:.2f}" if p.impact_factor else "N/A"
             rel_str = f"{p.relevance_score:.0f}%" if p.relevance_score > 0 else "-"
+            rt_str = getattr(p, 'research_type', '') or '-'
+            pc_str = getattr(p, 'pollutant_category', '') or '-'
+            ew_str = getattr(p, 'exposure_window', '') or '-'
             values = (i, p.title, p.authors[:60], p.journal,
-                      p.year, if_str, rel_str, p.doi, verified, p.source)
+                      p.year, if_str, rel_str,
+                      rt_str, pc_str, ew_str,
+                      p.doi, verified, p.source)
             tag = "even" if i % 2 == 0 else "odd"
             self.tree.insert("", tk.END, iid=str(i - 1), values=values,
                              tags=(tag,))
@@ -718,12 +746,20 @@ class LitSearchGUI:
         rel_lvl = relevance_level(paper.relevance_score)
         rel_display = f"{rel_str}  {rel_lvl}"
 
+        # 结构标签
+        rt_str = getattr(paper, 'research_type', '') or "未标注"
+        pc_str = getattr(paper, 'pollutant_category', '') or "未标注"
+        ew_str = getattr(paper, 'exposure_window', '') or "未标注"
+
         fields = [
             ("作者",     paper.authors),
             ("期刊",     paper.journal),
             ("年份",     paper.year),
             ("影响因子", if_display),
             ("相关度",   rel_display),
+            ("研究类型", rt_str),
+            ("污染物",   pc_str),
+            ("暴露窗口", ew_str),
             ("DOI",      paper.doi),
             ("DOI验证",  "✓ 通过" if paper.doi_verified else "✗ 未通过"),
             ("PMID",     paper.pmid or "无"),

@@ -19,9 +19,11 @@ from doi_validator import validate_papers
 from impact_factor import fetch_impact_factors, format_if, if_level
 from relevance_analyzer import (compute_batch_relevance, generate_insights,
                                  relevance_level, extract_relevant_sentences)
+from topic_guardrails import apply_topic_guardrails
+from paper_tagger import tag_papers, get_tag_summary
 
 # ─── 版本与联系信息 ─────────────────────────────────
-APP_VERSION = "v1.1.0"
+APP_VERSION = "v1.2.0"
 APP_NAME = "LitSearch 文献检索工具"
 CONTACT_EMAIL = "arcbj045@gmail.com"
 GITHUB_URL = "https://github.com/ArcanaJ045"
@@ -121,6 +123,9 @@ def papers_to_dataframe(papers):
             "年份": p.year,
             "IF": if_str,
             "相关度": rel_str,
+            "研究类型": getattr(p, 'research_type', '') or '-',
+            "污染物": getattr(p, 'pollutant_category', '') or '-',
+            "暴露窗口": getattr(p, 'exposure_window', '') or '-',
             "DOI": p.doi,
             "DOI验证": "✓" if p.doi_verified else "✗",
             "来源": p.source,
@@ -134,8 +139,9 @@ def export_csv_bytes(papers, include_abstract=False):
     import io
     output = io.StringIO()
     fieldnames = ["序号", "标题", "作者", "期刊", "年份",
-                  "影响因子", "相关度", "DOI", "DOI验证",
-                  "PMID", "链接", "来源"]
+                  "影响因子", "相关度",
+                  "研究类型", "污染物类别", "暴露窗口",
+                  "DOI", "DOI验证", "PMID", "链接", "来源"]
     if include_abstract:
         fieldnames.append("摘要")
     writer = csv.DictWriter(output, fieldnames=fieldnames)
@@ -146,6 +152,9 @@ def export_csv_bytes(papers, include_abstract=False):
             "序号": i, "标题": p.title, "作者": p.authors,
             "期刊": p.journal, "年份": p.year,
             "影响因子": if_str, "相关度": f"{p.relevance_score}%",
+            "研究类型": getattr(p, 'research_type', '') or '',
+            "污染物类别": getattr(p, 'pollutant_category', '') or '',
+            "暴露窗口": getattr(p, 'exposure_window', '') or '',
             "DOI": p.doi,
             "DOI验证": "通过" if p.doi_verified else "未通过",
             "PMID": p.pmid, "链接": p.display_link, "来源": p.source,
@@ -348,8 +357,21 @@ if search_clicked:
         # 相关度
         user_topic = topic_input.strip()
         if user_topic:
-            progress.progress(85, text="正在分析文献与课题的相关度...")
+            progress.progress(80, text="正在分析文献与课题的相关度...")
             papers = compute_batch_relevance(user_topic, papers)
+
+        # 结构标签打标
+        progress.progress(88, text="正在为文献打结构标签...")
+        papers = tag_papers(papers)
+        for p in papers:
+            p.research_type = getattr(p, '_tag_research_type', '')
+            p.pollutant_category = getattr(p, '_tag_pollutant_category', '')
+            p.exposure_window = getattr(p, '_tag_exposure_window', '')
+
+        # 课题防护栏
+        if user_topic:
+            progress.progress(93, text="正在应用课题防护栏...")
+            papers = apply_topic_guardrails(papers, user_topic)
 
         # 排序
         if sort_by == "pub_date":
@@ -425,6 +447,15 @@ if st.session_state.search_done and st.session_state.papers:
             txt_lines.append(f"    {p.journal}, {p.year}  |  IF: {if_str}")
             txt_lines.append(f"    DOI: {p.doi} [验证: {verified}]")
             txt_lines.append(f"    相关度: {p.relevance_score}%")
+            tags = []
+            rt = getattr(p, 'research_type', '')
+            pc = getattr(p, 'pollutant_category', '')
+            ew = getattr(p, 'exposure_window', '')
+            if rt: tags.append(f"研究类型: {rt}")
+            if pc: tags.append(f"污染物: {pc}")
+            if ew: tags.append(f"暴露窗口: {ew}")
+            if tags:
+                txt_lines.append(f"    {' | '.join(tags)}")
             if p.pmid:
                 txt_lines.append(f"    PMID: {p.pmid}")
             txt_lines.append(f"    {p.display_link}")
@@ -457,6 +488,9 @@ if st.session_state.search_done and st.session_state.papers:
                 "年份": st.column_config.TextColumn(width="small"),
                 "IF": st.column_config.TextColumn(width="small"),
                 "相关度": st.column_config.TextColumn(width="small"),
+                "研究类型": st.column_config.TextColumn(width="small"),
+                "污染物": st.column_config.TextColumn(width="small"),
+                "暴露窗口": st.column_config.TextColumn(width="small"),
                 "DOI": st.column_config.TextColumn(width="medium"),
                 "DOI验证": st.column_config.TextColumn(width="small"),
                 "来源": st.column_config.TextColumn(width="small"),
@@ -488,6 +522,17 @@ if st.session_state.search_done and st.session_state.papers:
 
                     verified_str = "✅ 通过" if p.doi_verified else "❌ 未通过"
                     st.markdown(f"**DOI验证:** {verified_str}")
+
+                    # 结构标签
+                    rt = getattr(p, 'research_type', '')
+                    pc = getattr(p, 'pollutant_category', '')
+                    ew = getattr(p, 'exposure_window', '')
+                    if rt:
+                        st.markdown(f"**研究类型:** {rt}")
+                    if pc:
+                        st.markdown(f"**污染物:** {pc}")
+                    if ew:
+                        st.markdown(f"**暴露窗口:** {ew}")
 
                     if p.doi:
                         st.markdown(f"**DOI:** [{p.doi}](https://doi.org/{p.doi})")
@@ -553,7 +598,9 @@ if not st.session_state.search_done:
     **功能亮点：**
     - 🔬 **双源检索** — 同时搜索 PubMed 和 Crossref，自动合并去重
     - 📈 **影响因子** — 通过 OpenAlex API 自动获取期刊影响因子
-    - 🎯 **相关性分析** — 基于 TF-IDF 计算文献与您课题的相关度
+    - 🎯 **多维度相关性评分** — 6 维度规则评分（污染物/结局/暴露窗口/对象/机制/语义）
+    - 🛡 **课题防护栏** — PFAS 课题自动降权非相关暴露物文献
+    - 🏷 **结构标签** — 自动识别研究类型、污染物类别、暴露窗口
     - 📊 **智能摘选** — 自动提取与您课题最相关的句子，生成分析报告
     - 🌐 **跨平台** — 网页版，Mac / Windows / Linux / 手机直接使用
     - 📥 **导出** — 支持 CSV / TXT 格式导出

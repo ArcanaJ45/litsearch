@@ -1,9 +1,15 @@
 """
 查询构建器：将关键词或自然语言描述转换为检索式
+
+v2: 支持 PubMed 同义词扩展 (PUBMED_SYNONYM_GROUPS)
+    将用户关键词拆分为「概念组」，每组内部 OR 扩展、组间 AND 连接，
+    避免把所有词都硬 AND 导致返回 0 结果。
 """
 
 import re
 from typing import List, Tuple
+
+from domain_vocab import PUBMED_SYNONYM_GROUPS
 
 
 # 常见中文→英文环境毒理学术语映射
@@ -177,6 +183,13 @@ def build_query(user_input: str,
     将用户输入转换为检索式。
     study_filters: 可选的研究类型过滤器 key 列表，如 ["animal_only", "exclude_review"]
     返回 (pubmed_query, crossref_query)
+
+    PubMed 策略（v2）：
+      1. 按空格拆分得到 term 列表
+      2. 对每个 term 查 PUBMED_SYNONYM_GROUPS，有则用 OR 扩展组替换
+      3. 若多个 term 属于同一概念（如 PFOS、PFOA 都被 "pfas" OR 组覆盖），合并
+      4. 不同概念间用 AND 连接
+      5. 限制 AND 概念组不超过 3 个，以防止过于严格
     """
     user_input = user_input.strip()
 
@@ -191,11 +204,11 @@ def build_query(user_input: str,
     if not terms:
         terms = [user_input]  # fallback
 
-    # PubMed 用 AND 连接
-    pubmed_query = " AND ".join(terms)
-
-    # Crossref 用空格连接（它内部做相关性搜索）
+    # ── Crossref：空格连接（它自己做相关性搜索）──
     crossref_query = " ".join(terms)
+
+    # ── PubMed：同义词扩展 + 概念分组 ──
+    pubmed_query = _build_pubmed_query(terms)
 
     # 应用研究类型过滤器
     if study_filters:
@@ -206,6 +219,59 @@ def build_query(user_input: str,
                 crossref_query += flt["crossref_append"]
 
     return pubmed_query, crossref_query
+
+
+def _build_pubmed_query(terms: list[str]) -> str:
+    """
+    根据 PUBMED_SYNONYM_GROUPS 将 terms 扩展为概念组。
+    同一个 GROUP key 覆盖的 terms 合并到一个 OR 组，
+    不同的 GROUP key 用 AND 连接。
+
+    例: ["PFAS", "neurotoxicity", "pregnancy"]
+    → ( "PFAS" OR "PFOS" ... ) AND ( "neurotoxicity" OR "neurodevelopment" ... )
+      AND ( "pregnancy" OR "prenatal" ... )
+    """
+    used_groups = {}     # group_key → expanded string
+    standalone = []      # 未被任何 group 覆盖的词
+
+    for t in terms:
+        t_lower = t.lower()
+        matched_group = None
+        for gkey, expanded_str in PUBMED_SYNONYM_GROUPS.items():
+            # 精确匹配 OR 词根匹配
+            if t_lower == gkey or t_lower in gkey:
+                matched_group = gkey
+                break
+            # 也检查 expanded_str 里是否含有该词（如 "PFOS" 匹配 pfas 组）
+            if f'"{t_lower}"' in expanded_str.lower() or f'"{t}"' in expanded_str:
+                matched_group = gkey
+                break
+        if matched_group:
+            used_groups[matched_group] = PUBMED_SYNONYM_GROUPS[matched_group]
+        else:
+            standalone.append(t)
+
+    parts = list(used_groups.values())
+
+    # standalone 词用简单包裹
+    for word in standalone:
+        # 多词短语用引号，单词直接用
+        if " " in word:
+            parts.append(f'"{word}"')
+        else:
+            parts.append(word)
+
+    if not parts:
+        return " AND ".join(terms)
+
+    # 限制 AND 组数量≤4，避免过于严格
+    if len(parts) > 4:
+        # 保留前 4 个最重要的（OR 扩展组优先）
+        expanded = [p for p in parts if p.startswith("(")]
+        plain = [p for p in parts if not p.startswith("(")]
+        parts = expanded[:3] + plain[:1] if expanded else parts[:4]
+
+    return " AND ".join(parts)
 
 
 def describe_query(user_input: str, pubmed_q: str, crossref_q: str,

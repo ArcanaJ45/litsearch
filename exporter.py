@@ -23,6 +23,7 @@ def export_csv(papers: List[Paper], filepath: str,
     fieldnames = [
         "序号", "标题", "作者", "期刊", "年份",
         "影响因子", "相关度",
+        "研究类型", "污染物类别", "暴露窗口",
         "DOI", "DOI验证", "PMID", "链接", "来源",
     ]
     if include_abstract:
@@ -41,6 +42,9 @@ def export_csv(papers: List[Paper], filepath: str,
                 "年份": p.year,
                 "影响因子": if_str,
                 "相关度": f"{p.relevance_score}%",
+                "研究类型": getattr(p, 'research_type', '') or '',
+                "污染物类别": getattr(p, 'pollutant_category', '') or '',
+                "暴露窗口": getattr(p, 'exposure_window', '') or '',
                 "DOI": p.doi,
                 "DOI验证": "通过" if p.doi_verified else "未通过",
                 "PMID": p.pmid,
@@ -69,6 +73,19 @@ def export_txt(papers: List[Paper], filepath: str) -> str:
             f.write(f"    {p.journal}, {p.year}  |  IF: {if_str}\n")
             f.write(f"    DOI: {p.doi} [验证: {verified}]\n")
             f.write(f"    相关度: {p.relevance_score}%\n")
+            # 结构标签
+            tags = []
+            rt = getattr(p, 'research_type', '')
+            pc = getattr(p, 'pollutant_category', '')
+            ew = getattr(p, 'exposure_window', '')
+            if rt:
+                tags.append(f"研究类型: {rt}")
+            if pc:
+                tags.append(f"污染物: {pc}")
+            if ew:
+                tags.append(f"暴露窗口: {ew}")
+            if tags:
+                f.write(f"    {' | '.join(tags)}\n")
             if p.pmid:
                 f.write(f"    PMID: {p.pmid}\n")
             f.write(f"    {p.display_link}\n")

@@ -22,6 +22,10 @@ class Paper:
     # v1.1 新增
     impact_factor: Optional[float] = None    # 期刊影响因子 (2yr_mean_citedness)
     relevance_score: float = 0.0             # 与用户课题的相关度 (0-100)
+    # v1.2 新增 ── 结构标签
+    research_type: str = ""                  # 研究类型
+    pollutant_category: str = ""             # 污染物类别
+    exposure_window: str = ""                # 暴露窗口
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -49,6 +53,9 @@ class Paper:
             doi_verified=self.doi_verified or other.doi_verified,
             impact_factor=self.impact_factor or other.impact_factor,
             relevance_score=max(self.relevance_score, other.relevance_score),
+            research_type=self.research_type or other.research_type,
+            pollutant_category=self.pollutant_category or other.pollutant_category,
+            exposure_window=self.exposure_window or other.exposure_window,
         )
         return merged
 
@@ -63,6 +70,16 @@ class Paper:
             f"      DOI: {self.doi}  [验证: {verified}]",
             f"      相关度: {self.relevance_score}%",
         ]
+        # 结构标签
+        tags = []
+        if self.research_type:
+            tags.append(self.research_type)
+        if self.pollutant_category:
+            tags.append(self.pollutant_category)
+        if self.exposure_window:
+            tags.append(self.exposure_window)
+        if tags:
+            lines.append(f"      标签: {' | '.join(tags)}")
         if self.pmid:
             lines.append(f"      PMID: {self.pmid}")
         lines.append(f"      来源: {self.source}  |  链接: {self.display_link}")
