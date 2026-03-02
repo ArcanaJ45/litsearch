@@ -2,11 +2,11 @@
 
 
 a = Analysis(
-    ['gui.py'],
-    pathex=[],
+    ['src/gui.py'],
+    pathex=['src'],
     binaries=[],
     datas=[],
-    hiddenimports=['requests', 'models', 'api_client', 'query_builder', 'doi_validator', 'exporter', 'impact_factor', 'relevance_analyzer'],
+    hiddenimports=['requests', 'models', 'api_client', 'query_builder', 'doi_validator', 'exporter', 'impact_factor', 'relevance_analyzer', 'domain_vocab', 'topic_guardrails', 'paper_tagger'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -2,13 +2,14 @@
 # macOS 平台打包配置
 
 a = Analysis(
-    ['gui.py'],
-    pathex=[],
+    ['src/gui.py'],
+    pathex=['src'],
     binaries=[],
     datas=[],
     hiddenimports=['requests', 'models', 'api_client', 'query_builder',
                    'doi_validator', 'exporter', 'impact_factor',
-                   'relevance_analyzer'],
+                   'relevance_analyzer', 'domain_vocab',
+                   'topic_guardrails', 'paper_tagger'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -52,8 +53,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'LitSearch文献检索',
         'CFBundleDisplayName': 'LitSearch 文献检索',
-        'CFBundleShortVersionString': '1.1.0',
-        'CFBundleVersion': '1.1.0',
+        'CFBundleShortVersionString': '1.2.0',
+        'CFBundleVersion': '1.2.0',
         'NSHighResolutionCapable': True,
         'LSMinimumSystemVersion': '10.15',
     },
