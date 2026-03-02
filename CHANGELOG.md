@@ -2,6 +2,11 @@
 
 ## v1.1.0 (2026-03-02)
 
+### 🖥 跨平台支持
+- **macOS 应用打包**: 新增 `LitSearch_macOS.spec` 配置，支持生成 `.app` 应用程序包（同时支持 Intel 和 Apple Silicon）
+- **GitHub Actions 自动构建**: 推送 tag 后自动构建 macOS `.dmg` + Windows `.exe`，并发布到 GitHub Releases
+- macOS 首次打开需右键 → 打开（绕过 Gatekeeper）
+
 ### ✨ 新功能
 - **期刊影响因子 (IF)**: 通过 OpenAlex API 自动获取期刊 2 年平均被引次数（等效 JCR Impact Factor），结果展示影响因子数值与等级标识
 - **课题相关性分析**: 用户可输入自己的课题描述，系统自动计算每篇文献与课题的相关度分数 (0-100)，基于 TF-IDF 余弦相似度与关键词覆盖率算法

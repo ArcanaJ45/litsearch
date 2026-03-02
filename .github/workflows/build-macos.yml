@@ -1,0 +1,138 @@
+name: Build macOS App
+
+on:
+  push:
+    tags:
+      - 'v*'          # 推送 v开头的 tag 时自动构建（如 v1.1.0）
+  workflow_dispatch:    # 也可以在 GitHub 网页上手动触发
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ['3.12']    # macOS runner 推荐用 3.12，稳定兼容
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+          # macOS 需要 tkinter，GitHub runner 自带
+
+      - name: Build macOS .app with PyInstaller
+        run: |
+          pyinstaller LitSearch_macOS.spec --clean
+
+      - name: Create DMG disk image
+        run: |
+          # 安装 create-dmg 工具
+          brew install create-dmg
+
+          # 创建 DMG
+          create-dmg \
+            --volname "LitSearch 文献检索" \
+            --volicon "dist/LitSearch文献检索.app/Contents/Resources/icon-windowed.icns" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon "LitSearch文献检索.app" 150 190 \
+            --app-drop-link 450 190 \
+            --no-internet-enable \
+            "LitSearch文献检索-macOS.dmg" \
+            "dist/LitSearch文献检索.app" \
+          || true
+
+          # 如果 create-dmg 失败（比如没有 icon），用简单方式创建
+          if [ ! -f "LitSearch文献检索-macOS.dmg" ]; then
+            hdiutil create -volname "LitSearch文献检索" \
+              -srcfolder "dist/LitSearch文献检索.app" \
+              -ov -format UDZO \
+              "LitSearch文献检索-macOS.dmg"
+          fi
+
+      - name: Upload .app as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LitSearch-macOS-app
+          path: dist/LitSearch文献检索.app
+          retention-days: 30
+
+      - name: Upload .dmg as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LitSearch-macOS-dmg
+          path: LitSearch文献检索-macOS.dmg
+          retention-days: 30
+          if-no-files-found: ignore
+
+      # 如果是 tag 推送，自动创建 GitHub Release
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            LitSearch文献检索-macOS.dmg
+          body: |
+            ## macOS 版本
+
+            ### 安装方式
+            1. 下载 `LitSearch文献检索-macOS.dmg`
+            2. 双击打开 DMG 文件
+            3. 将 `LitSearch文献检索.app` 拖到 **应用程序** 文件夹
+            4. 首次打开时，右键点击 → 选择"打开"（绕过 macOS Gatekeeper）
+
+            ### 系统要求
+            - macOS 10.15 (Catalina) 及以上
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 同时构建 Windows 版本
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.12']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+
+      - name: Build Windows exe
+        run: |
+          pyinstaller "LitSearch文献检索.spec" --clean
+
+      - name: Upload Windows exe as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LitSearch-Windows-exe
+          path: dist/LitSearch文献检索.exe
+          retention-days: 30
+
+      - name: Create Release (Windows)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/LitSearch文献检索.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
