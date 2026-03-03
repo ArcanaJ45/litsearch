@@ -1,25 +1,32 @@
-# LitSearch - 文献检索工具
+# LitSearch - 文献检索工具 (v1.3.0)
 
-LitSearch 是一个面向研究生课题场景的文献检索与筛选工具，适用于生物医学、环境毒理学与环境健康等方向。它支持从 PubMed 和 Crossref 检索真实文献、校验 DOI、显示期刊影响因子，并根据课题描述对文献进行多维度相关性评分和课题防护栏过滤，从而提升文献综述与课题设计效率。
+LitSearch 是一个面向研究生课题场景的文献检索与筛选工具，适用于生物医学、环境毒理学与环境健康等方向。它支持从 **PubMed、Crossref、Semantic Scholar、OpenAlex** 四大学术数据源联合检索真实文献、校验 DOI、显示期刊影响因子，并根据课题描述对文献进行多维度相关性评分和课题防护栏过滤，从而提升文献综述与课题设计效率。
+
+提供 **GUI 桌面版**（tkinter）、**Streamlit 网页版** 和 **CLI 命令行** 三种使用方式。
 
 ## 功能特性
 
 ### 核心检索
 - 支持 **英文关键词** 和 **中文自然语言描述** 输入
-- 同时检索 **PubMed E-utilities + Crossref API**，自动去重合并
+- **四源联合检索**：同时搜索 **PubMed E-utilities + Crossref + Semantic Scholar + OpenAlex**，自动去重合并
+- **灵活数据源选择**：支持 6 种模式 —— 全部(推荐) / PubMed+Crossref / 仅PubMed / 仅Crossref / 仅Semantic Scholar / 仅OpenAlex
 - **PubMed 同义词扩展**：自动将关键词扩展为 OR 概念组（如 PFAS → PFOS/PFOA/PFNA/...），避免过于严格的 AND 查询
+- **Semantic Scholar**：覆盖 2 亿+ 论文（CS/工程/生物医学/交叉学科），包含引用计数
+- **OpenAlex 搜索**：覆盖 2.5 亿+ 学术作品，全学科最全面的开放数据源
 
-### 智能分析（v1.2.0）
+### 智能分析
 - **多维度相关性评分**：6 维度规则评分（污染物 30 + 健康结局 25 + 暴露窗口 15 + 研究对象 10 + 机制方法 10 + TF-IDF 语义 10 = 100 分）
 - **课题防护栏**：针对 PFAS 等课题自动启用专项规则，降权非目标暴露物（如 nicotine/morphine）文献
 - **结构化标签**：自动识别研究类型（流行病学/动物实验/体外实验/综述）、污染物类别、暴露窗口
 - **影响因子**：通过 OpenAlex API 自动获取期刊 2 年平均被引次数
+- **智能摘选**：从摘要中自动提取与用户课题最相关的句子，生成参考建议
 
 ### 其他
 - DOI 有效性验证（格式校验 + Crossref API 在线验证）
 - 研究类型过滤（仅动物实验/仅人群研究/仅综述/排除综述）
 - 导出 CSV（可含摘要）/ TXT，含影响因子、相关度、结构标签
 - 内置中英文环境毒理学术语映射表（100+ 术语）
+- 跨平台支持：Windows `.exe` / macOS `.app` / Streamlit 网页版
 
 ## 环境要求
 
@@ -43,13 +50,17 @@ python src/gui.py
 
 或直接运行打包好的 `LitSearch文献检索.exe`（Windows）/ `LitSearch文献检索.app`（macOS）。
 
-### Streamlit 网页版
+### Streamlit 网页版（推荐 · 跨平台）
 
 ```bash
-streamlit run src/streamlit_app.py
+streamlit run streamlit_app.py
 ```
 
-在线版本部署于 Streamlit Community Cloud，任何浏览器即可访问。
+根目录的 `streamlit_app.py` 是入口包装文件，会自动加载 `src/streamlit_app.py`。
+
+在线版本部署于 Streamlit Community Cloud，任何浏览器（Mac/Windows/Linux/手机）即可访问，无需安装。
+
+功能包含：四源联合检索、影响因子、相关性分析、智能摘选、结构标签、CSV/TXT 导出、表格视图 + 卡片视图。
 
 ### CLI 命令行
 
@@ -84,29 +95,32 @@ python src/main.py "PFAS exposure birth weight" -n 30 --csv results.csv --abstra
 ## 项目结构
 
 ```
-lit_search/
-├── src/                          # 源代码
-│   ├── gui.py                    # GUI 入口（tkinter）
-│   ├── streamlit_app.py          # Streamlit 网页版入口
-│   ├── main.py                   # CLI 入口
-│   ├── models.py                 # Paper 数据模型
-│   ├── api_client.py             # PubMed + Crossref API 客户端
-│   ├── query_builder.py          # 查询构建 + PubMed 同义词扩展
-│   ├── doi_validator.py          # DOI 格式校验 + 在线验证
-│   ├── exporter.py               # CSV / TXT 导出
-│   ├── impact_factor.py          # OpenAlex 影响因子查询
-│   ├── relevance_analyzer.py     # 多维度相关性评分引擎 (v2)
-│   ├── domain_vocab.py           # 领域词典（PFAS 同义词、结局、暴露窗口等）
-│   ├── topic_guardrails.py       # 课题防护栏（PFAS 专项规则）
-│   └── paper_tagger.py           # 文献结构打标
-├── .streamlit/                   # Streamlit 主题配置
-├── .github/workflows/            # GitHub Actions（macOS/Win 自动构建）
-├── LitSearch文献检索.spec         # PyInstaller Windows 打包配置
-├── LitSearch_macOS.spec          # PyInstaller macOS 打包配置
+litsearch/
+├── streamlit_app.py              # Streamlit 入口包装文件
 ├── requirements.txt              # Python 依赖
 ├── CHANGELOG.md                  # 更新日志
+├── LitSearch文献检索.spec         # PyInstaller Windows 打包配置
+├── LitSearch_macOS.spec          # PyInstaller macOS 打包配置
 ├── LICENSE
-└── README.md
+├── README.md
+├── .streamlit/                   # Streamlit 主题配置
+│   └── config.toml
+├── .github/workflows/            # GitHub Actions（macOS/Win 自动构建）
+└── src/                          # 源代码
+    ├── __init__.py
+    ├── gui.py                    # GUI 入口（tkinter）
+    ├── streamlit_app.py          # Streamlit 网页版主程序
+    ├── main.py                   # CLI 入口
+    ├── models.py                 # Paper 数据模型
+    ├── api_client.py             # PubMed + Crossref + S2 + OpenAlex API 客户端
+    ├── query_builder.py          # 查询构建 + PubMed 同义词扩展
+    ├── doi_validator.py          # DOI 格式校验 + 在线验证
+    ├── exporter.py               # CSV / TXT 导出
+    ├── impact_factor.py          # OpenAlex 影响因子查询
+    ├── relevance_analyzer.py     # 多维度相关性评分引擎 (v2)
+    ├── domain_vocab.py           # 领域词典（PFAS 同义词、结局、暴露窗口等）
+    ├── topic_guardrails.py       # 课题防护栏（PFAS 专项规则）
+    └── paper_tagger.py           # 文献结构打标
 ```
 
 ## 输出字段
@@ -123,8 +137,10 @@ lit_search/
 
 - PubMed E-utilities 免费使用，无需 API Key（每秒 3 次请求限制）
 - Crossref API 免费，建议在 `api_client.py` 中替换为你的邮箱以获得 polite pool 优先级
+- Semantic Scholar API (S2) 免费，无需注册（有速率限制）
 - OpenAlex API 免费，无需注册
 - 中文术语映射表（`query_builder.py`）和领域词典（`domain_vocab.py`）可根据研究方向自行扩展
+- CLI 模式目前仅支持 PubMed + Crossref 双源检索，四源联合检索请使用 GUI 或 Streamlit 网页版
 
 ## 联系方式
 
